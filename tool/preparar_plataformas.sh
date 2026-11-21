@@ -41,4 +41,8 @@ open(p, 'w', encoding='utf-8').write(s)
 EOF
 fi
 
-echo "Plataformas prontas. Agora: flutter pub get && flutter run"
+# Ícone do app (Android e iPhone) a partir de assets/icon.
+flutter pub get
+dart run flutter_launcher_icons
+
+echo "Plataformas prontas. Agora: flutter run"
