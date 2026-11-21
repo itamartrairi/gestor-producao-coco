@@ -100,10 +100,33 @@ class _PedidosScreenState extends State<PedidosScreen> {
                         if (p['tipo'] == 'balcao') 'Venda à vista ${dataBr(p['data_pedido'] as String?)}',
                         if (p['canal'] != null) p['canal'] as String,
                       ].join(' • ')),
-                      trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
-                        Text(brl(Base.d(p['total'])), style: const TextStyle(fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 4),
-                        Etiqueta(PedidoService.rotulos[st] ?? st, cor: _cor(st)),
+                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
+                          Text(brl(Base.d(p['total'])), style: const TextStyle(fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 4),
+                          Etiqueta(PedidoService.rotulos[st] ?? st, cor: _cor(st)),
+                        ]),
+                        if (st != 'entregue')
+                          PopupMenuButton<String>(
+                            tooltip: 'Editar ou excluir',
+                            onSelected: (op) async {
+                              if (op == 'editar') {
+                                await abrir(context, PedidoFormScreen(tipo: p['tipo'] as String, pedidoId: p['id'] as int));
+                              } else if (op == 'excluir') {
+                                if (!await confirmarExclusao(context, 'o pedido #${p['id']}',
+                                    detalhe: 'Só é possível excluir pedidos sem pagamento. Com sinal recebido, use Cancelar.')) {
+                                  return;
+                                }
+                                if (!context.mounted) return;
+                                await executar(context, () => S.pedidos.excluir(p['id'] as int), sucesso: 'Pedido excluído');
+                              }
+                              rec();
+                            },
+                            itemBuilder: (_) => [
+                              if (st == 'orcamento') const PopupMenuItem(value: 'editar', child: Text('Editar')),
+                              const PopupMenuItem(value: 'excluir', child: Text('Excluir', style: TextStyle(color: Colors.red))),
+                            ],
+                          ),
                       ]),
                       onTap: () async {
                         await abrir(context, PedidoDetalheScreen(pedidoId: p['id'] as int));

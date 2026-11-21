@@ -466,6 +466,42 @@ class PedidoService {
     return id;
   }
 
+  /// Exclui um pedido que não teve efeito financeiro (orçamento, confirmado sem
+  /// pagamento ou cancelado sem sinal): libera as reservas e apaga o pedido.
+  /// Pedidos entregues ou com pagamentos devem ser cancelados/estornados.
+  Future<void> excluir(int pedidoId) async {
+    await db.transaction((txn) async {
+      final r = await txn.query('pedidos', where: 'id = ?', whereArgs: [pedidoId]);
+      if (r.isEmpty) throw RegraException('Pedido não encontrado');
+      final p = r.first;
+      if (p['status'] == 'entregue') {
+        throw RegraException('Pedido entregue não pode ser excluído: use o estorno de venda.');
+      }
+      final pags = await txn.rawQuery('SELECT COUNT(*) c FROM pagamentos_pedido WHERE pedido_id = ?', [pedidoId]);
+      if (Base.i(pags.first['c']) > 0) {
+        throw RegraException('O pedido tem pagamento/sinal registrado. Cancele o pedido (devolvendo o sinal) em vez de excluir.');
+      }
+      final fin1 = await txn.rawQuery(
+          "SELECT COUNT(*) c FROM titulos WHERE ref_tipo = 'pedido' AND ref_id = ?", [pedidoId]);
+      final dre = await txn.rawQuery(
+          "SELECT COUNT(*) c FROM lancamentos_resultado WHERE ref_tipo = 'pedido' AND ref_id = ?", [pedidoId]);
+      if (Base.i(fin1.first['c']) > 0 || Base.i(dre.first['c']) > 0) {
+        throw RegraException('O pedido já gerou lançamentos financeiros e não pode ser excluído.');
+      }
+      await txn.delete('reservas', where: 'pedido_id = ?', whereArgs: [pedidoId]);
+      await desvincularPedido(txn, pedidoId);
+      await txn.delete('pedido_historico', where: 'pedido_id = ?', whereArgs: [pedidoId]);
+      await txn.delete('pedido_itens', where: 'pedido_id = ?', whereArgs: [pedidoId]);
+      await txn.delete('pedidos', where: 'id = ?', whereArgs: [pedidoId]);
+      await Base.auditar(txn, 'excluir_pedido', entidade: 'pedidos', entidadeId: pedidoId);
+    });
+  }
+
+  /// Remove vínculos de outras tabelas com o pedido antes de excluí-lo.
+  Future<void> desvincularPedido(DatabaseExecutor txn, int pedidoId) async {
+    await txn.update('colheitas', {'pedido_id': null}, where: 'pedido_id = ?', whereArgs: [pedidoId]);
+  }
+
   /// Cancela pedido não entregue: libera reservas e registra a devolução do sinal.
   /// O valor não devolvido fica como receita de sinal retido.
   Future<void> cancelar({

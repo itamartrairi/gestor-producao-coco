@@ -210,9 +210,24 @@ class _PedidoDetalheScreenState extends State<PedidoDetalheScreen> {
               if (st == 'orcamento')
                 IconButton(
                   icon: const Icon(Icons.edit_outlined),
+                  tooltip: 'Editar',
                   onPressed: () async {
                     await abrir(context, PedidoFormScreen(tipo: p['tipo'] as String, pedidoId: widget.pedidoId));
                     _rec();
+                  },
+                ),
+              if (st != 'entregue')
+                IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  tooltip: 'Excluir',
+                  onPressed: () async {
+                    if (!await confirmarExclusao(context, 'o pedido #${widget.pedidoId}',
+                        detalhe: 'Só é possível excluir pedidos sem pagamento. Com sinal recebido, use Cancelar.')) {
+                      return;
+                    }
+                    if (!context.mounted) return;
+                    final ok = await executar(context, () => S.pedidos.excluir(widget.pedidoId), sucesso: 'Pedido excluído');
+                    if (ok && context.mounted) Navigator.pop(context);
                   },
                 ),
             ],

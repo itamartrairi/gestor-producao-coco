@@ -298,4 +298,83 @@ void main() {
     expect(dre.receitaBruta, 100);
     expect(dre.cpv, 30);
   });
+
+  test('excluir: pedido, compra, colheita, manejo, talhão e cadastros com regras de segurança', () async {
+    final cad = CadastroService(db);
+    final campo = CampoService(db);
+    final hoje = hojeIso();
+    await db.update('contas_financeiras', {'saldo_inicial': 500, 'data_saldo_inicial': '2000-01-01'}, where: 'id = 2');
+    final adubo = await cad.salvarItem({
+      'tipo': 'insumo', 'nome': 'Adubo', 'unidade_compra': 'saco 50 kg', 'unidade_consumo': 'kg', 'fator_conversao': 50,
+    });
+    final forn = await db.insert('fornecedores', {'nome': 'Forn', 'criado_em': agoraIso()});
+    final compras = CompraService(db);
+    final est = EstoqueService(db);
+    final fin = FinanceiroService(db);
+
+    // Compra à vista confirmada e ainda intacta: excluir estorna estoque e pagamento.
+    final c1 = await compras.salvar(fornecedorId: forn, data: hoje, condicao: 'avista', contaId: 2,
+        itens: [ItemCompra(itemId: adubo, quantidade: 1, custoTotal: 100)]);
+    await compras.confirmar(c1);
+    expect(await fin.saldoConta(2), 400);
+    await compras.excluir(c1);
+    expect((await est.saldo(adubo, 0)).fisico, 0);
+    expect(await fin.saldoConta(2), 500);
+    expect(await db.query('titulos'), isEmpty);
+
+    // Compra usada num manejo não pode ser excluída.
+    final c2 = await compras.salvar(fornecedorId: forn, data: hoje, condicao: 'prazo', parcelas: 1, contaId: 2,
+        itens: [ItemCompra(itemId: adubo, quantidade: 1, custoTotal: 100)]);
+    await compras.confirmar(c2);
+    final talhao = await campo.salvarTalhao({'nome': 'T1'});
+    final manejo = await campo.registrarManejo(
+        talhaoId: talhao, data: hoje, operacao: 'adubacao', insumos: [InsumoUsado(itemId: adubo, quantidade: 10)], maoObra: 20);
+    await expectLater(compras.excluir(c2), throwsA(isA<RegraException>()));
+
+    // Manejo editado (mão de obra) e colheita concluída excluída: manejo volta a ficar pendente.
+    await campo.editarManejo(manejoId: manejo, data: hoje, operacao: 'adubacao', maoObra: 30, outrosCustos: 0);
+    expect(await campo.custoPendente(talhao), 50.0); // 10 kg × 2,00 + 30
+    final coco = await cad.salvarItem({'tipo': 'acabado', 'nome': 'Coco', 'unidade_venda': 'un'});
+    final v = (await cad.variacoes(coco)).first['id'] as int;
+    final col = await campo.planejarColheita(talhaoId: talhao, itemId: coco, variacaoId: v, data: hoje);
+    await campo.editarColheita(colheitaId: col, data: hoje, qtdPrevista: 100, responsavel: 'João');
+    await campo.concluirColheita(colheitaId: col, qtdAprovada: 100, maoObra: 10, data: hoje);
+    expect(await campo.custoPendente(talhao), 0);
+    await expectLater(campo.excluirManejo(manejo), throwsA(isA<RegraException>())); // apropriado
+    await expectLater(campo.excluirTalhao(talhao), throwsA(isA<RegraException>()));
+    await campo.excluirColheita(col);
+    expect((await est.saldo(coco, v)).fisico, 0);
+    expect(await campo.custoPendente(talhao), 50.0);
+    expect(await db.query('lancamentos_resultado', where: "ref_tipo = 'colheita'"), isEmpty);
+
+    // Manejo excluído devolve o adubo; depois o talhão pode ser excluído.
+    await campo.excluirManejo(manejo);
+    expect((await est.saldo(adubo, 0)).fisico, 50);
+    await campo.excluirTalhao(talhao);
+    expect(await db.query('talhoes'), isEmpty);
+
+    // Pedido: orçamento é excluído; com sinal, não.
+    final cli = await db.insert('clientes', {'nome': 'Cli', 'criado_em': agoraIso()});
+    final ped = PedidoService(db);
+    final p1 = await ped.salvar(tipo: 'encomenda', clienteId: cli, dataPedido: hoje,
+        itens: [ItemPedido(itemId: coco, variacaoId: v, quantidade: 1, precoUnitario: 2)]);
+    await ped.excluir(p1);
+    expect(await db.query('pedidos'), isEmpty);
+    final p2 = await ped.salvar(tipo: 'encomenda', clienteId: cli, dataPedido: hoje,
+        itens: [ItemPedido(itemId: coco, variacaoId: v, quantidade: 1, precoUnitario: 2)]);
+    await ped.registrarPagamento(pedidoId: p2, meioId: 1, valor: 1, data: hoje);
+    await expectLater(ped.excluir(p2), throwsA(isA<RegraException>()));
+
+    // Cadastros em uso não são excluídos; sem uso, sim.
+    await expectLater(cad.excluirSimples('clientes', cli), throwsA(isA<RegraException>()));
+    await expectLater(cad.excluirItem(adubo), throwsA(isA<RegraException>()));
+    await expectLater(cad.excluirSimples('categorias_financeiras', 1), throwsA(isA<RegraException>())); // padrão
+    final cli2 = await db.insert('clientes', {'nome': 'Sem uso', 'criado_em': agoraIso()});
+    await cad.excluirSimples('clientes', cli2);
+    final novo = await cad.salvarItem({'tipo': 'acabado', 'nome': 'Sem uso', 'unidade_venda': 'un'});
+    final v1 = (await cad.variacoes(novo)).first['id'] as int;
+    await expectLater(cad.excluirVariacao(v1), throwsA(isA<RegraException>())); // única variação
+    await cad.excluirItem(novo);
+    expect(await db.query('itens', where: 'id = ?', whereArgs: [novo]), isEmpty);
+  });
 }

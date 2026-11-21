@@ -167,12 +167,60 @@ class CompraService {
     });
   }
 
-  Future<void> excluirRascunho(int compraId) async {
-    final c = await db.query('compras', where: 'id = ?', whereArgs: [compraId]);
-    if (c.isEmpty || c.first['status'] != 'rascunho') {
-      throw RegraException('Somente rascunhos podem ser excluídos');
-    }
-    await db.delete('compras', where: 'id = ?', whereArgs: [compraId]);
+  Future<void> excluirRascunho(int compraId) => excluir(compraId);
+
+  /// Exclui a compra. Rascunho: apenas apaga. Confirmada: estorna a entrada no
+  /// estoque e as contas a pagar, desde que os itens ainda não tenham sido
+  /// usados/vendidos e não haja pagamento manual registrado.
+  Future<void> excluir(int compraId) async {
+    await db.transaction((txn) async {
+      final rows = await txn.query('compras', where: 'id = ?', whereArgs: [compraId]);
+      if (rows.isEmpty) throw RegraException('Compra não encontrada');
+      final c = rows.first;
+      if (c['status'] == 'confirmada') {
+        // 1. Estoque: os lotes da compra precisam estar intactos.
+        final lotes = await txn.query('lotes', where: "origem = 'compra' AND origem_id = ?", whereArgs: [compraId]);
+        for (final l in lotes) {
+          final it = await Base.item(txn, l['item_id'] as int);
+          if ((Base.d(l['saldo']) - Base.d(l['qtd_inicial'])).abs() > Base.eps) {
+            throw RegraException('Não é possível excluir: parte de ${it['nome']} desta compra já foi usada ou vendida.');
+          }
+          final s = await estoque.saldo(l['item_id'] as int, l['variacao_id'] as int, ex: txn);
+          if (s.valido - Base.d(l['qtd_inicial']) < s.reservado - Base.eps) {
+            throw RegraException('Não é possível excluir: ${it['nome']} desta compra está reservado para pedidos.');
+          }
+        }
+        // 2. Financeiro: só pagamentos automáticos da compra à vista podem ser desfeitos.
+        final titulos = await txn.query('titulos', where: "ref_tipo = 'compra' AND ref_id = ?", whereArgs: [compraId]);
+        for (final t in titulos) {
+          final movs = await txn.query('movimentos_financeiros', where: 'titulo_id = ?', whereArgs: [t['id']]);
+          final automatico = c['condicao'] == 'avista' && movs.length <= 1;
+          if (movs.isNotEmpty && !automatico) {
+            throw RegraException('A compra tem pagamentos registrados no Financeiro. Estorne-os antes de excluir.');
+          }
+        }
+        for (final t in titulos) {
+          await txn.delete('movimentos_financeiros', where: 'titulo_id = ?', whereArgs: [t['id']]);
+          await txn.delete('titulos', where: 'id = ?', whereArgs: [t['id']]);
+        }
+        // 3. Desfaz o custo médio dos insumos e apaga lotes e movimentos.
+        for (final l in lotes) {
+          final it = await Base.item(txn, l['item_id'] as int);
+          final qtd = Base.d(l['qtd_inicial']);
+          final s = await estoque.saldo(l['item_id'] as int, l['variacao_id'] as int, ex: txn);
+          final resto = s.fisico - qtd;
+          final cm = Base.d(it['custo_medio']);
+          final novoCm = resto > Base.eps ? (s.fisico * cm - qtd * Base.d(l['custo_unitario'])) / resto : cm;
+          await txn.update('itens', {'custo_medio': r6(novoCm < 0 ? 0 : novoCm)}, where: 'id = ?', whereArgs: [l['item_id']]);
+          await txn.delete('movimentos_estoque', where: 'lote_id = ?', whereArgs: [l['id']]);
+          await txn.delete('lotes', where: 'id = ?', whereArgs: [l['id']]);
+        }
+      }
+      await txn.delete('compra_itens', where: 'compra_id = ?', whereArgs: [compraId]);
+      await txn.delete('compras', where: 'id = ?', whereArgs: [compraId]);
+      await Base.auditar(txn, 'excluir_compra', entidade: 'compras', entidadeId: compraId,
+          detalhes: 'Status ${c['status']} • total ${brl(Base.d(c['total']))}');
+    });
   }
 
   Future<List<Map<String, Object?>>> listar() => db.rawQuery('''

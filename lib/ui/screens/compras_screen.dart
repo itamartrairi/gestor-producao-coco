@@ -158,14 +158,19 @@ class _CompraFormScreenState extends State<CompraFormScreen> {
       appBar: AppBar(
         title: Text(widget.compraId == null ? 'Nova compra' : 'Compra #${widget.compraId}'),
         actions: [
-          if (widget.compraId != null && editavel)
+          if (widget.compraId != null)
             IconButton(
               icon: const Icon(Icons.delete_outline),
+              tooltip: 'Excluir',
               onPressed: () async {
-                if (await confirmar(context, 'Excluir rascunho', 'Excluir esta compra não confirmada?', ok: 'Excluir')) {
-                  await S.compras.excluirRascunho(widget.compraId!);
-                  if (context.mounted) Navigator.pop(context);
-                }
+                final msg = editavel
+                    ? 'Excluir esta compra não confirmada?'
+                    : 'Excluir esta compra confirmada? A entrada no estoque e as contas a pagar serão estornadas. '
+                        'Só é possível se os itens ainda não foram usados/vendidos e não houver pagamento manual.';
+                if (!await confirmar(context, 'Excluir compra', msg, ok: 'Excluir')) return;
+                if (!context.mounted) return;
+                final ok = await executar(context, () => S.compras.excluir(widget.compraId!), sucesso: 'Compra excluída');
+                if (ok && context.mounted) Navigator.pop(context);
               },
             ),
         ],

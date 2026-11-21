@@ -68,7 +68,18 @@ class _ItensScreenState extends State<ItensScreen> {
                   if (i['categoria'] != null) i['categoria'] as String,
                   if (Base.ehInsumo(i['tipo'] as String)) '${i['unidade_compra'] ?? '-'} = ${numero(Base.d(i['fator_conversao']))} ${i['unidade_consumo']}',
                 ].join(' • ')),
-                trailing: const Icon(Icons.chevron_right),
+                trailing: BotoesEditarExcluir(
+                  onEditar: () async {
+                    await abrir(context, ItemFormScreen(itemId: i['id'] as int, tipoInicial: i['tipo'] as String, tipos: widget.tipos));
+                    rec();
+                  },
+                  onExcluir: () async {
+                    if (!await confirmarExclusao(context, '"${i['nome']}"')) return;
+                    if (!context.mounted) return;
+                    await executar(context, () => S.cad.excluirItem(i['id'] as int), sucesso: 'Excluído');
+                    rec();
+                  },
+                ),
                 onTap: () async {
                   await abrir(context, ItemFormScreen(itemId: i['id'] as int, tipoInicial: i['tipo'] as String, tipos: widget.tipos));
                   rec();
@@ -209,7 +220,22 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
   Widget build(BuildContext context) {
     if (!_ok) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     return Scaffold(
-      appBar: AppBar(title: Text(widget.itemId == null ? 'Novo cadastro' : 'Editar cadastro')),
+      appBar: AppBar(
+        title: Text(widget.itemId == null ? 'Novo cadastro' : 'Editar cadastro'),
+        actions: [
+          if (widget.itemId != null)
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Excluir',
+              onPressed: () async {
+                if (!await confirmarExclusao(context, 'este cadastro')) return;
+                if (!context.mounted) return;
+                final ok = await executar(context, () => S.cad.excluirItem(widget.itemId!), sucesso: 'Excluído');
+                if (ok && context.mounted) Navigator.pop(context);
+              },
+            ),
+        ],
+      ),
       bottomNavigationBar: SafeArea(child: Padding(padding: const EdgeInsets.all(12), child: FilledButton(onPressed: _salvar, child: const Text('Salvar')))),
       body: ListView(padding: const EdgeInsets.all(12), children: [
         CampoLista<String>('Tipo', _tipo, {for (final t in widget.tipos) t: CadastroService.tiposItem[t]!},
@@ -238,7 +264,16 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
             ListTile(
               title: Text(v['nome'] as String, style: TextStyle(decoration: Base.i(v['ativo']) == 0 ? TextDecoration.lineThrough : null)),
               subtitle: Text('${brl(Base.d(v['preco_venda']))} / ${v['unidade_venda']}'),
-              trailing: const Icon(Icons.edit_outlined),
+              trailing: BotoesEditarExcluir(
+                onEditar: () => _editarVariacao(v),
+                onExcluir: () async {
+                  if (!await confirmarExclusao(context, 'a variação "${v['nome']}"')) return;
+                  if (!mounted) return;
+                  await executar(context, () => S.cad.excluirVariacao(v['id'] as int), sucesso: 'Excluída');
+                  _variacoes = await S.cad.variacoes(widget.itemId!);
+                  if (mounted) setState(() {});
+                },
+              ),
               onTap: () => _editarVariacao(v),
             ),
         ],
@@ -403,6 +438,13 @@ class _SimplesCrudState extends State<SimplesCrud> {
     setState(() => _v++);
   }
 
+  Future<void> _excluir(Map<String, Object?> reg) async {
+    if (!await confirmarExclusao(context, '"${reg['nome']}"')) return;
+    if (!mounted) return;
+    await executar(context, () => S.cad.excluirSimples(widget.tabela, reg['id'] as int), sucesso: 'Excluído');
+    if (mounted) setState(() => _v++);
+  }
+
   Future<Map<Object, String>> opcoesContas() async {
     final r = await banco.query('contas_financeiras', orderBy: 'nome');
     return {for (final x in r) x['id'] as int: x['nome'] as String};
@@ -423,7 +465,7 @@ class _SimplesCrudState extends State<SimplesCrud> {
               ListTile(
                 title: Text(r['nome'] as String),
                 subtitle: widget.subtitulo == null ? null : Text(widget.subtitulo!(r)),
-                trailing: const Icon(Icons.edit_outlined),
+                trailing: BotoesEditarExcluir(onEditar: () => _editar(r), onExcluir: () => _excluir(r)),
                 onTap: () => _editar(r),
               ),
           ]);

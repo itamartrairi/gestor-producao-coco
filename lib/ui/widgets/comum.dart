@@ -294,3 +294,38 @@ class Etiqueta extends StatelessWidget {
 
 Future<T?> abrir<T>(BuildContext context, Widget tela) =>
     Navigator.of(context).push<T>(MaterialPageRoute(builder: (_) => tela));
+
+/// Pergunta antes de excluir. [oQue] ex.: 'o pedido #12'.
+Future<bool> confirmarExclusao(BuildContext context, String oQue, {String? detalhe}) =>
+    confirmar(context, 'Excluir', 'Excluir $oQue?${detalhe != null ? '\n\n$detalhe' : ''}\n\nEsta ação não pode ser desfeita.',
+        ok: 'Excluir');
+
+/// Menu com as ações Editar e Excluir (usado ao tocar e segurar um item de lista).
+Future<String?> menuEditarExcluir(BuildContext context, {bool podeEditar = true, bool podeExcluir = true}) =>
+    showModalBottomSheet<String>(
+      context: context,
+      builder: (c) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (podeEditar)
+            ListTile(leading: const Icon(Icons.edit_outlined), title: const Text('Editar'), onTap: () => Navigator.pop(c, 'editar')),
+          if (podeExcluir)
+            ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text('Excluir', style: TextStyle(color: Colors.red)),
+                onTap: () => Navigator.pop(c, 'excluir')),
+        ]),
+      ),
+    );
+
+/// Botões Editar e Excluir lado a lado, para o final de um item de lista.
+class BotoesEditarExcluir extends StatelessWidget {
+  const BotoesEditarExcluir({super.key, this.onEditar, this.onExcluir});
+  final VoidCallback? onEditar;
+  final VoidCallback? onExcluir;
+  @override
+  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
+        if (onEditar != null) IconButton(icon: const Icon(Icons.edit_outlined), tooltip: 'Editar', onPressed: onEditar),
+        if (onExcluir != null)
+          IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), tooltip: 'Excluir', onPressed: onExcluir),
+      ]);
+}

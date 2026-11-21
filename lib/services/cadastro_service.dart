@@ -2,6 +2,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../core/format.dart';
 import '../data/db.dart';
+import 'base.dart';
 
 class CadastroService {
   CadastroService(this.db);
@@ -42,6 +43,100 @@ class CadastroService {
         }
       }
       return itemId;
+    });
+  }
+
+  /// Consultas que, se encontrarem registros, impedem excluir um cadastro.
+  /// Cada item: (SQL com um parâmetro "?", descrição do uso).
+  static const dependencias = <String, List<(String, String)>>{
+    'clientes': [
+      ('SELECT COUNT(*) c FROM pedidos WHERE cliente_id = ?', 'pedidos'),
+      ('SELECT COUNT(*) c FROM titulos WHERE cliente_id = ?', 'contas a receber'),
+    ],
+    'fornecedores': [
+      ('SELECT COUNT(*) c FROM compras WHERE fornecedor_id = ?', 'compras'),
+      ('SELECT COUNT(*) c FROM titulos WHERE fornecedor_id = ?', 'contas a pagar'),
+    ],
+    'contas_financeiras': [
+      ('SELECT COUNT(*) c FROM movimentos_financeiros WHERE conta_id = ?', 'movimentos financeiros'),
+      ('SELECT COUNT(*) c FROM meios_pagamento WHERE conta_id = ?', 'meios de pagamento'),
+      ('SELECT COUNT(*) c FROM compras WHERE conta_id = ?', 'compras'),
+      ('SELECT COUNT(*) c FROM titulos WHERE conta_prevista_id = ?', 'contas a pagar/receber'),
+    ],
+    'meios_pagamento': [
+      ('SELECT COUNT(*) c FROM pagamentos_pedido WHERE meio_id = ?', 'pagamentos de pedidos'),
+      ('SELECT COUNT(*) c FROM movimentos_financeiros WHERE meio_id = ?', 'movimentos financeiros'),
+    ],
+    'categorias_financeiras': [
+      ('SELECT COUNT(*) c FROM categorias_financeiras WHERE id = ? AND codigo IS NOT NULL', 'o sistema (categoria padrão)'),
+      ('SELECT COUNT(*) c FROM titulos WHERE categoria_id = ?', 'contas a pagar/receber'),
+      ('SELECT COUNT(*) c FROM movimentos_financeiros WHERE categoria_id = ?', 'movimentos financeiros'),
+      ('SELECT COUNT(*) c FROM lancamentos_resultado WHERE categoria_id = ?', 'lançamentos da DRE'),
+    ],
+    'categorias': [
+      ('SELECT COUNT(*) c FROM itens WHERE categoria_id = ?', 'produtos/insumos'),
+    ],
+    'itens': [
+      ('SELECT COUNT(*) c FROM lotes WHERE item_id = ?', 'lotes de estoque'),
+      ('SELECT COUNT(*) c FROM movimentos_estoque WHERE item_id = ?', 'movimentos de estoque'),
+      ('SELECT COUNT(*) c FROM pedido_itens WHERE item_id = ?', 'pedidos'),
+      ('SELECT COUNT(*) c FROM compra_itens WHERE item_id = ?', 'compras'),
+      ('SELECT COUNT(*) c FROM manejo_insumos WHERE item_id = ?', 'manejos'),
+      ('SELECT COUNT(*) c FROM colheita_insumos WHERE item_id = ?', 'colheitas'),
+      ('SELECT COUNT(*) c FROM colheitas WHERE item_id = ?', 'colheitas'),
+    ],
+    'variacoes': [
+      ('SELECT COUNT(*) c FROM lotes WHERE variacao_id = ?', 'lotes de estoque'),
+      ('SELECT COUNT(*) c FROM movimentos_estoque WHERE variacao_id = ?', 'movimentos de estoque'),
+      ('SELECT COUNT(*) c FROM pedido_itens WHERE variacao_id = ?', 'pedidos'),
+      ('SELECT COUNT(*) c FROM colheitas WHERE variacao_id = ?', 'colheitas'),
+    ],
+  };
+
+  /// Lança [RegraException] se o registro estiver em uso.
+  static Future<void> verificarUso(DatabaseExecutor ex, String tabela, int id) async {
+    final usos = <String>[];
+    for (final (sql, desc) in dependencias[tabela] ?? const <(String, String)>[]) {
+      final r = await ex.rawQuery(sql, [id]);
+      if (((r.first['c'] as int?) ?? 0) > 0) usos.add(desc);
+    }
+    if (usos.isNotEmpty) {
+      final temAtivo = ['clientes', 'fornecedores'].contains(tabela) ? '' : ' Se não for mais usar, desative o cadastro.';
+      throw RegraException('Não é possível excluir: o cadastro é usado em ${usos.toSet().join(', ')}.$temAtivo');
+    }
+  }
+
+  /// Exclui um cadastro simples (clientes, fornecedores, contas, meios, categorias).
+  Future<void> excluirSimples(String tabela, int id) async {
+    if (!dependencias.containsKey(tabela)) throw RegraException('Exclusão não permitida para este cadastro');
+    await db.transaction((txn) async {
+      await verificarUso(txn, tabela, id);
+      await txn.delete(tabela, where: 'id = ?', whereArgs: [id]);
+      await Base.auditar(txn, 'excluir_cadastro', entidade: tabela, entidadeId: id);
+    });
+  }
+
+  /// Exclui um produto/insumo sem movimentação, com suas variações.
+  Future<void> excluirItem(int itemId) async {
+    await db.transaction((txn) async {
+      await verificarUso(txn, 'itens', itemId);
+      await txn.delete('variacoes', where: 'item_id = ?', whereArgs: [itemId]);
+      await txn.delete('itens', where: 'id = ?', whereArgs: [itemId]);
+      await Base.auditar(txn, 'excluir_item', entidade: 'itens', entidadeId: itemId);
+    });
+  }
+
+  /// Exclui uma variação sem movimentação (o produto precisa manter ao menos uma).
+  Future<void> excluirVariacao(int variacaoId) async {
+    await db.transaction((txn) async {
+      final v = await txn.query('variacoes', where: 'id = ?', whereArgs: [variacaoId]);
+      if (v.isEmpty) throw RegraException('Variação não encontrada');
+      final irmas = await txn.rawQuery('SELECT COUNT(*) c FROM variacoes WHERE item_id = ?', [v.first['item_id']]);
+      if (((irmas.first['c'] as int?) ?? 0) <= 1) {
+        throw RegraException('O produto precisa ter ao menos uma variação. Edite esta em vez de excluir.');
+      }
+      await verificarUso(txn, 'variacoes', variacaoId);
+      await txn.delete('variacoes', where: 'id = ?', whereArgs: [variacaoId]);
     });
   }
 

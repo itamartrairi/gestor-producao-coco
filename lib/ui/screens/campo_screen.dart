@@ -83,6 +83,13 @@ class _ListaColheitasState extends State<_ListaColheitas> {
                     await abrir(context, ColheitaDetalheScreen(colheitaId: o['id'] as int));
                     rec();
                   },
+                  onLongPress: () async {
+                    final op = await menuEditarExcluir(context, podeEditar: st == 'planejada');
+                    if (op == null || !context.mounted) return;
+                    if (op == 'editar') await editarColheita(context, o);
+                    if (op == 'excluir') await excluirColheitaUi(context, o);
+                    rec();
+                  },
                 ),
               );
             },
@@ -91,6 +98,52 @@ class _ListaColheitasState extends State<_ListaColheitas> {
       ),
     );
   }
+}
+
+/// Edita data, quantidade prevista e responsável de uma colheita planejada.
+Future<bool> editarColheita(BuildContext context, Map<String, Object?> o) async {
+  final qtd = TextEditingController(text: Base.d(o['qtd_prevista']) > 0 ? fmtCampo(Base.d(o['qtd_prevista'])) : '');
+  final resp = TextEditingController(text: (o['responsavel'] as String?) ?? '');
+  var data = o['data'] as String;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (c) => StatefulBuilder(
+      builder: (c, set) => AlertDialog(
+        title: Text('Editar colheita ${o['id']}'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            CampoData('Data da colheita', data, (v) => set(() => data = v ?? data)),
+            CampoNumero('Quantidade prevista', qtd),
+            CampoTexto('Responsável / turma', resp),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Salvar')),
+        ],
+      ),
+    ),
+  );
+  if (ok != true || !context.mounted) return false;
+  return executar(
+      context,
+      () => S.campo.editarColheita(
+          colheitaId: o['id'] as int, data: data, qtdPrevista: parseNum(qtd.text), responsavel: resp.text),
+      sucesso: 'Colheita atualizada');
+}
+
+/// Confirma e exclui (ou estorna, se concluída) uma colheita.
+Future<bool> excluirColheitaUi(BuildContext context, Map<String, Object?> o) async {
+  final concluida = o['status'] == 'concluida';
+  if (!await confirmarExclusao(context, 'a colheita ${o['id']}',
+      detalhe: concluida
+          ? 'O lote de cocos sai do estoque, os insumos da colheita voltam ao estoque e os manejos voltam a ficar '
+              'pendentes no talhão. Só é possível se nenhum coco do lote foi vendido.'
+          : null)) {
+    return false;
+  }
+  if (!context.mounted) return false;
+  return executar(context, () => S.campo.excluirColheita(o['id'] as int), sucesso: 'Colheita excluída');
 }
 
 /// Diálogo para planejar uma colheita. Devolve o id criado.
@@ -179,7 +232,26 @@ class _ColheitaDetalheScreenState extends State<ColheitaDetalheScreen> {
         final st = o['status'] as String;
         final unit = Base.d(o['custo_unitario']);
         return Scaffold(
-          appBar: AppBar(title: Text('Colheita ${o['id']}')),
+          appBar: AppBar(
+            title: Text('Colheita ${o['id']}'),
+            actions: [
+              if (st == 'planejada')
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined),
+                  tooltip: 'Editar',
+                  onPressed: () async {
+                    if (await editarColheita(context, o) && mounted) setState(() => _v++);
+                  },
+                ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Excluir',
+                onPressed: () async {
+                  if (await excluirColheitaUi(context, o) && context.mounted) Navigator.pop(context);
+                },
+              ),
+            ],
+          ),
           body: ListView(padding: const EdgeInsets.all(12), children: [
             Text(nomeComVariacao(o), style: Theme.of(context).textTheme.titleMedium),
             Text('Talhão ${o['talhao']} • ${dataBr(o['data'] as String)}'
@@ -438,6 +510,13 @@ class _ListaManejosState extends State<_ListaManejos> {
                     await _detalheManejo(context, m);
                     rec();
                   },
+                  onLongPress: () async {
+                    final op = await menuEditarExcluir(context,
+                        podeEditar: st == 'ativo' && !apropriado, podeExcluir: !apropriado);
+                    if (op == null || !context.mounted) return;
+                    await _acaoManejo(context, m, op);
+                    rec();
+                  },
                 ),
               );
             },
@@ -450,8 +529,9 @@ class _ListaManejosState extends State<_ListaManejos> {
   Future<void> _detalheManejo(BuildContext context, Map<String, Object?> m) async {
     final ins = await S.campo.insumosDoManejo(m['id'] as int);
     if (!context.mounted) return;
-    final podeCancelar = m['status'] == 'ativo' && m['colheita_id'] == null;
-    final cancelar = await showDialog<bool>(
+    final pendente = m['status'] == 'ativo' && m['colheita_id'] == null;
+    final podeExcluir = m['colheita_id'] == null;
+    final acao = await showDialog<String>(
       context: context,
       builder: (c) => AlertDialog(
         title: Text(CampoService.operacoes[m['operacao']] ?? '${m['operacao']}'),
@@ -468,25 +548,49 @@ class _ListaManejosState extends State<_ListaManejos> {
             LinhaValor('Outros', brl(Base.d(m['custo_outros']))),
             LinhaValor('Total', brl(Base.d(m['custo_total'])), negrito: true),
             if (m['motivo_cancelamento'] != null) Text('Cancelado: ${m['motivo_cancelamento']}'),
+            if (m['colheita_id'] != null)
+              Text('Apropriado à colheita ${m['colheita_id']}: para editar ou excluir, exclua a colheita antes.',
+                  style: const TextStyle(fontSize: 12)),
           ]),
         ),
         actions: [
-          if (podeCancelar)
-            TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Cancelar manejo', style: TextStyle(color: Colors.red))),
-          FilledButton(onPressed: () => Navigator.pop(c, false), child: const Text('Fechar')),
+          if (podeExcluir)
+            TextButton(onPressed: () => Navigator.pop(c, 'excluir'), child: const Text('Excluir', style: TextStyle(color: Colors.red))),
+          if (pendente) TextButton(onPressed: () => Navigator.pop(c, 'cancelar'), child: const Text('Cancelar manejo')),
+          if (pendente) TextButton(onPressed: () => Navigator.pop(c, 'editar'), child: const Text('Editar')),
+          FilledButton(onPressed: () => Navigator.pop(c), child: const Text('Fechar')),
         ],
       ),
     );
-    if (cancelar != true || !context.mounted) return;
-    final motivo = await pedirTexto(context, 'Cancelar manejo');
-    if (motivo == null || !context.mounted) return;
-    await executar(context, () => S.campo.cancelarManejo(m['id'] as int, motivo), sucesso: 'Manejo cancelado e insumos devolvidos');
+    if (acao == null || !context.mounted) return;
+    await _acaoManejo(context, m, acao);
+  }
+}
+
+/// Executa Editar / Excluir / Cancelar de um manejo.
+Future<void> _acaoManejo(BuildContext context, Map<String, Object?> m, String acao) async {
+  switch (acao) {
+    case 'editar':
+      await abrir(context, ManejoFormScreen(manejo: m));
+    case 'excluir':
+      if (!await confirmarExclusao(context, 'este manejo',
+          detalhe: 'Os insumos aplicados voltam para o estoque.')) {
+        return;
+      }
+      if (!context.mounted) return;
+      await executar(context, () => S.campo.excluirManejo(m['id'] as int), sucesso: 'Manejo excluído e insumos devolvidos');
+    case 'cancelar':
+      final motivo = await pedirTexto(context, 'Cancelar manejo');
+      if (motivo == null || !context.mounted) return;
+      await executar(context, () => S.campo.cancelarManejo(m['id'] as int, motivo), sucesso: 'Manejo cancelado e insumos devolvidos');
   }
 }
 
 class ManejoFormScreen extends StatefulWidget {
-  const ManejoFormScreen({super.key, this.talhao});
+  const ManejoFormScreen({super.key, this.talhao, this.manejo});
   final Map<String, Object?>? talhao;
+  /// Manejo existente (modo edição).
+  final Map<String, Object?>? manejo;
   @override
   State<ManejoFormScreen> createState() => _ManejoFormScreenState();
 }
@@ -501,27 +605,73 @@ class _ManejoFormScreenState extends State<ManejoFormScreen> {
   final _outros = TextEditingController();
   final List<_LinhaInsumo> _insumos = [];
   bool _salvando = false;
+  List<Map<String, Object?>> _insumosExistentes = [];
+
+  bool get _edicao => widget.manejo != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final m = widget.manejo;
+    if (m != null) {
+      _talhao = {'id': m['talhao_id'], 'nome': m['talhao']};
+      _operacao = m['operacao'] as String;
+      _data = m['data'] as String;
+      _desc.text = (m['descricao'] as String?) ?? '';
+      _resp.text = (m['responsavel'] as String?) ?? '';
+      _maoObra.text = fmtCampo(Base.d(m['custo_mao_obra']));
+      _outros.text = fmtCampo(Base.d(m['custo_outros']));
+      S.campo.insumosDoManejo(m['id'] as int).then((l) {
+        if (mounted) setState(() => _insumosExistentes = l);
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Novo manejo')),
+      appBar: AppBar(
+        title: Text(_edicao ? 'Editar manejo' : 'Novo manejo'),
+        actions: [
+          if (_edicao)
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Excluir',
+              onPressed: () async {
+                if (!await confirmarExclusao(context, 'este manejo', detalhe: 'Os insumos aplicados voltam para o estoque.')) return;
+                if (!context.mounted) return;
+                final ok = await executar(context, () => S.campo.excluirManejo(widget.manejo!['id'] as int), sucesso: 'Manejo excluído');
+                if (ok && context.mounted) Navigator.pop(context, true);
+              },
+            ),
+        ],
+      ),
       body: ListView(padding: const EdgeInsets.all(12), children: [
         ListTile(
           contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.grid_on_outlined),
           title: Text(_talhao == null ? 'Selecionar talhão' : 'Talhão: ${_talhao!['nome']}'),
-          trailing: const Icon(Icons.search),
-          onTap: () async {
-            final t = await escolherTalhao(context);
-            if (t != null) setState(() => _talhao = t);
-          },
+          trailing: _edicao ? null : const Icon(Icons.search),
+          onTap: _edicao
+              ? null
+              : () async {
+                  final t = await escolherTalhao(context);
+                  if (t != null) setState(() => _talhao = t);
+                },
         ),
         CampoLista<String>('Operação', _operacao, CampoService.operacoes, (v) => setState(() => _operacao = v ?? 'outro')),
         CampoData('Data', _data, (v) => setState(() => _data = v ?? hojeIso())),
         CampoTexto('Descrição (ex.: NPK 20-05-20, 1 kg por planta)', _desc),
         CampoTexto('Responsável', _resp),
-        _blocoInsumos(context, _insumos, () => setState(() {}), titulo: 'Insumos aplicados (baixa do estoque)'),
+        if (_edicao) ...[
+          const Secao('Insumos aplicados'),
+          if (_insumosExistentes.isEmpty) const Text('Nenhum insumo.', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          for (final i in _insumosExistentes)
+            LinhaValor('${i['nome']} (${numero(Base.d(i['quantidade']))} ${i['unidade_consumo']})', brl(Base.d(i['custo_total']))),
+          const Text('Para corrigir os insumos, exclua este manejo (eles voltam ao estoque) e lance de novo.',
+              style: TextStyle(fontSize: 12)),
+        ] else
+          _blocoInsumos(context, _insumos, () => setState(() {}), titulo: 'Insumos aplicados (baixa do estoque)'),
         const Secao('Outros custos'),
         CampoNumero('Mão de obra (diárias, empreita)', _maoObra, prefixo: 'R\$ '),
         CampoNumero('Outros (combustível, aluguel de máquina…)', _outros, prefixo: 'R\$ '),
@@ -540,6 +690,18 @@ class _ManejoFormScreenState extends State<ManejoFormScreen> {
                   }
                   setState(() => _salvando = true);
                   final ok = await executar(context, () async {
+                    if (_edicao) {
+                      await S.campo.editarManejo(
+                        manejoId: widget.manejo!['id'] as int,
+                        data: _data,
+                        operacao: _operacao,
+                        descricao: _desc.text,
+                        responsavel: _resp.text,
+                        maoObra: parseNum(_maoObra.text),
+                        outrosCustos: parseNum(_outros.text),
+                      );
+                      return;
+                    }
                     await S.campo.registrarManejo(
                       talhaoId: _talhao!['id'] as int,
                       data: _data,
@@ -550,7 +712,7 @@ class _ManejoFormScreenState extends State<ManejoFormScreen> {
                       maoObra: parseNum(_maoObra.text),
                       outrosCustos: parseNum(_outros.text),
                     );
-                  }, sucesso: 'Manejo registrado');
+                  }, sucesso: _edicao ? 'Manejo atualizado' : 'Manejo registrado');
                   if (!mounted) return;
                   setState(() => _salvando = false);
                   if (ok) Navigator.pop(context, true);
@@ -596,6 +758,14 @@ class _ListaTalhoesState extends State<_ListaTalhoes> {
             itemBuilder: (c, i) => _CartaoTalhao(lista[i], () async {
               await abrir(context, TalhaoFormScreen(talhaoId: lista[i]['id'] as int));
               rec();
+            }, () async {
+              final op = await menuEditarExcluir(context);
+              if (op == null || !context.mounted) return;
+              if (op == 'editar') await abrir(context, TalhaoFormScreen(talhaoId: lista[i]['id'] as int));
+              if (op == 'excluir' && await confirmarExclusao(context, 'o talhão "${lista[i]['nome']}"') && context.mounted) {
+                await executar(context, () => S.campo.excluirTalhao(lista[i]['id'] as int), sucesso: 'Talhão excluído');
+              }
+              rec();
             }),
           );
         },
@@ -605,9 +775,10 @@ class _ListaTalhoesState extends State<_ListaTalhoes> {
 }
 
 class _CartaoTalhao extends StatelessWidget {
-  const _CartaoTalhao(this.t, this.onTap);
+  const _CartaoTalhao(this.t, this.onTap, this.onLongPress);
   final Map<String, Object?> t;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -628,6 +799,7 @@ class _CartaoTalhao extends StatelessWidget {
           Text(brl(Base.d(t['custo_pendente'])), style: const TextStyle(fontWeight: FontWeight.bold)),
         ]),
         onTap: onTap,
+        onLongPress: onLongPress,
       ),
     );
   }
@@ -686,7 +858,22 @@ class _TalhaoFormScreenState extends State<TalhaoFormScreen> {
     final area = parseNum(_area.text);
     final plantas = parseNum(_plantas.text);
     return Scaffold(
-      appBar: AppBar(title: Text(widget.talhaoId == null ? 'Novo talhão' : 'Editar talhão')),
+      appBar: AppBar(
+        title: Text(widget.talhaoId == null ? 'Novo talhão' : 'Editar talhão'),
+        actions: [
+          if (widget.talhaoId != null)
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Excluir',
+              onPressed: () async {
+                if (!await confirmarExclusao(context, 'este talhão')) return;
+                if (!context.mounted) return;
+                final ok = await executar(context, () => S.campo.excluirTalhao(widget.talhaoId!), sucesso: 'Talhão excluído');
+                if (ok && context.mounted) Navigator.pop(context, true);
+              },
+            ),
+        ],
+      ),
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(12),

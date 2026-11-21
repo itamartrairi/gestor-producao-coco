@@ -102,6 +102,19 @@ class CampoService {
     return id;
   }
 
+  /// Exclui um talhão sem manejos nem colheitas (senão, desative-o).
+  Future<void> excluirTalhao(int talhaoId) async {
+    await db.transaction((txn) async {
+      final m = await txn.rawQuery('SELECT COUNT(*) c FROM manejos WHERE talhao_id = ?', [talhaoId]);
+      final c = await txn.rawQuery('SELECT COUNT(*) c FROM colheitas WHERE talhao_id = ?', [talhaoId]);
+      if (Base.i(m.first['c']) + Base.i(c.first['c']) > 0) {
+        throw RegraException('O talhão tem manejos ou colheitas registrados. Desative-o em vez de excluir.');
+      }
+      await txn.delete('talhoes', where: 'id = ?', whereArgs: [talhaoId]);
+      await Base.auditar(txn, 'excluir_talhao', entidade: 'talhoes', entidadeId: talhaoId);
+    });
+  }
+
   /// Talhões com custo acumulado a apropriar e produção dos últimos 365 dias.
   Future<List<Map<String, Object?>>> listarTalhoes({bool apenasAtivos = false}) {
     final desde = isoData(DateTime.now().subtract(const Duration(days: 365)));
@@ -228,6 +241,59 @@ class CampoService {
     });
   }
 
+  /// Edita os dados de um manejo ainda não apropriado. Os insumos não mudam
+  /// aqui: para corrigi-los, exclua o manejo e lance de novo.
+  Future<void> editarManejo({
+    required int manejoId,
+    required String data,
+    required String operacao,
+    String? descricao,
+    String? responsavel,
+    required double maoObra,
+    required double outrosCustos,
+  }) async {
+    if (!operacoes.containsKey(operacao)) throw RegraException('Operação inválida');
+    if (maoObra < 0 || outrosCustos < 0) throw RegraException('Custos não podem ser negativos');
+    await db.transaction((txn) async {
+      final r = await txn.query('manejos', where: 'id = ?', whereArgs: [manejoId]);
+      if (r.isEmpty) throw RegraException('Manejo não encontrado');
+      final m = r.first;
+      if (m['status'] != 'ativo') throw RegraException('Manejo cancelado não pode ser editado');
+      if (m['colheita_id'] != null) {
+        throw RegraException('Este manejo já foi apropriado à colheita ${m['colheita_id']}. Exclua a colheita para editá-lo.');
+      }
+      final insumos = Base.d(m['custo_insumos']);
+      if (insumos <= 0 && maoObra <= 0 && outrosCustos <= 0) {
+        throw RegraException('Informe a mão de obra ou outros custos');
+      }
+      await txn.update('manejos', {
+        'data': data,
+        'operacao': operacao,
+        'descricao': (descricao == null || descricao.trim().isEmpty) ? null : descricao.trim(),
+        'responsavel': (responsavel == null || responsavel.trim().isEmpty) ? null : responsavel.trim(),
+        'custo_mao_obra': r2(maoObra),
+        'custo_outros': r2(outrosCustos),
+        'custo_total': r2(insumos + maoObra + outrosCustos),
+      }, where: 'id = ?', whereArgs: [manejoId]);
+      await Base.auditar(txn, 'editar_manejo', entidade: 'manejos', entidadeId: manejoId);
+    });
+  }
+
+  /// Exclui um manejo não apropriado, devolvendo os insumos ao estoque.
+  Future<void> excluirManejo(int manejoId) async {
+    final r = await db.query('manejos', where: 'id = ?', whereArgs: [manejoId]);
+    if (r.isEmpty) throw RegraException('Manejo não encontrado');
+    if (r.first['colheita_id'] != null) {
+      throw RegraException('Este manejo já foi apropriado à colheita ${r.first['colheita_id']}. Exclua a colheita antes.');
+    }
+    if (r.first['status'] == 'ativo') await cancelarManejo(manejoId, 'Exclusão do manejo');
+    await db.transaction((txn) async {
+      await txn.delete('manejo_insumos', where: 'manejo_id = ?', whereArgs: [manejoId]);
+      await txn.delete('manejos', where: 'id = ?', whereArgs: [manejoId]);
+      await Base.auditar(txn, 'excluir_manejo', entidade: 'manejos', entidadeId: manejoId);
+    });
+  }
+
   Future<List<Map<String, Object?>>> listarManejos({int? talhaoId}) => db.rawQuery('''
       SELECT m.*, t.nome talhao FROM manejos m JOIN talhoes t ON t.id = m.talhao_id
       ${talhaoId != null ? 'WHERE m.talhao_id = ?' : ''}
@@ -265,6 +331,72 @@ class CampoService {
       'pedido_id': pedidoId,
       'status': 'planejada',
       'criado_em': agoraIso(),
+    });
+  }
+
+  /// Edita uma colheita planejada.
+  Future<void> editarColheita({
+    required int colheitaId,
+    required String data,
+    double qtdPrevista = 0,
+    String? responsavel,
+  }) async {
+    if (qtdPrevista < 0) throw RegraException('Quantidade prevista não pode ser negativa');
+    final c = await db.query('colheitas', where: 'id = ?', whereArgs: [colheitaId]);
+    if (c.isEmpty) throw RegraException('Colheita não encontrada');
+    if (c.first['status'] != 'planejada') throw RegraException('Somente colheitas planejadas podem ser editadas');
+    await db.update('colheitas', {
+      'data': data,
+      'qtd_prevista': qtdPrevista,
+      'responsavel': (responsavel == null || responsavel.trim().isEmpty) ? null : responsavel.trim(),
+    }, where: 'id = ?', whereArgs: [colheitaId]);
+  }
+
+  /// Exclui a colheita. Planejada ou cancelada: apenas apaga. Concluída: estorna
+  /// tudo (lote de cocos, insumos da colheita, apropriação dos manejos e
+  /// lançamentos na DRE), desde que nenhum coco do lote tenha sido vendido.
+  Future<void> excluirColheita(int colheitaId) async {
+    await db.transaction((txn) async {
+      final r = await txn.query('colheitas', where: 'id = ?', whereArgs: [colheitaId]);
+      if (r.isEmpty) throw RegraException('Colheita não encontrada');
+      final c = r.first;
+      if (c['status'] == 'concluida') {
+        final loteId = c['lote_id'] as int?;
+        if (loteId != null) {
+          final l = (await txn.query('lotes', where: 'id = ?', whereArgs: [loteId])).first;
+          if ((Base.d(l['saldo']) - Base.d(l['qtd_inicial'])).abs() > Base.eps) {
+            throw RegraException('Não é possível excluir: parte dos cocos desta colheita já foi vendida ou baixada.');
+          }
+          final s = await estoque.saldo(l['item_id'] as int, l['variacao_id'] as int, ex: txn);
+          if (s.valido - Base.d(l['qtd_inicial']) < s.reservado - Base.eps) {
+            throw RegraException('Não é possível excluir: os cocos desta colheita estão reservados para pedidos.');
+          }
+          await txn.delete('movimentos_estoque', where: 'lote_id = ?', whereArgs: [loteId]);
+          await txn.update('colheitas', {'lote_id': null}, where: 'id = ?', whereArgs: [colheitaId]);
+          await txn.delete('lotes', where: 'id = ?', whereArgs: [loteId]);
+        }
+        // Devolve ao estoque os insumos usados na colheita.
+        for (final u in await txn.query('colheita_insumos', where: 'colheita_id = ?', whereArgs: [colheitaId])) {
+          await estoque.entradaInsumo(txn,
+              itemId: u['item_id'] as int,
+              qtdConsumo: Base.d(u['quantidade']),
+              custoTotal: Base.d(u['custo_total']),
+              data: hojeIso(),
+              lote: 'EST-C$colheitaId',
+              refTipo: 'colheita',
+              refId: colheitaId,
+              tipoMov: 'estorno',
+              motivo: 'Exclusão da colheita $colheitaId');
+        }
+        // Os manejos voltam a ficar pendentes no talhão.
+        await txn.update('manejos', {'colheita_id': null}, where: 'colheita_id = ?', whereArgs: [colheitaId]);
+        await txn.delete('lancamentos_resultado', where: "ref_tipo = 'colheita' AND ref_id = ?", whereArgs: [colheitaId]);
+      }
+      await txn.update('pedido_itens', {'colheita_id': null}, where: 'colheita_id = ?', whereArgs: [colheitaId]);
+      await txn.delete('colheita_insumos', where: 'colheita_id = ?', whereArgs: [colheitaId]);
+      await txn.delete('colheitas', where: 'id = ?', whereArgs: [colheitaId]);
+      await Base.auditar(txn, 'excluir_colheita', entidade: 'colheitas', entidadeId: colheitaId,
+          detalhes: 'Status ${c['status']}');
     });
   }
 
