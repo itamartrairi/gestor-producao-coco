@@ -12,6 +12,7 @@ import 'campo_screen.dart';
 import 'compras_screen.dart';
 import 'config_screen.dart';
 import 'dre_screen.dart';
+import 'licenca_screen.dart';
 import 'financeiro_screen.dart';
 import 'relatorios_screen.dart';
 
@@ -51,6 +52,8 @@ class MaisScreen extends StatelessWidget {
                   child: const Text('Sair'),
                 ),
               )
+            ,
+            const LicencaTile(),
 
           ]),
         ),

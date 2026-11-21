@@ -27,6 +27,16 @@ Baseado no [Gestor de Produção e Vendas](https://github.com/itamartrairi/gesto
 | Relatórios | Dois PDFs (A4): **Fluxo de Caixa** (realizado, projetado ou ambos) e **Vendas e Custos**, com os custos das colheitas do período por talhão. |
 | Backup | Arquivo `.gpcbak` com banco + logomarca, cifrado com AES‑256‑GCM (chave PBKDF2‑SHA256). |
 
+## Ativação (licença por aparelho)
+
+O app só abre com um **código de ativação**. Na primeira abertura ele mostra um **número de instalação** (8 letras/números); o cliente envia esse número ao vendedor, que gera o código de 16 caracteres na página geradora, com o prazo desejado (30 dias, 1 ano, sem prazo…). O código:
+
+- vale somente para aquele aparelho e para este app;
+- traz a validade embutida e não pode ser alterado (assinatura HMAC‑SHA256 com a chave de `lib/core/licenca_config.dart`);
+- é conferido sem internet; perto do vencimento o app avisa, e depois de vencido pede um código novo (os dados ficam guardados).
+
+Em **Mais › Licença** o cliente vê a validade e renova. Para mostrar seu contato na tela de ativação, preencha `contatoVendedor` em `lib/core/licenca_config.dart`. **Não divulgue a chave** desse arquivo nem a página geradora.
+
 ## Gerar o app
 
 Pré‑requisitos: [Flutter](https://docs.flutter.dev/get-started/install) (canal stable), Android Studio (Android) e Xcode num Mac (iOS).

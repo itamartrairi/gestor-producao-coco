@@ -7,6 +7,7 @@ import 'data/db.dart';
 import 'services/base.dart';
 import 'services/demo_service.dart';
 import 'ui/screens/home_screen.dart';
+import 'ui/screens/licenca_screen.dart';
 import 'ui/screens/mais_screen.dart';
 import 'ui/screens/onboarding_screen.dart';
 
@@ -48,7 +49,7 @@ class _GestorAppState extends State<GestorApp> {
           useMaterial3: true,
           inputDecorationTheme: const InputDecorationTheme(isDense: true),
         ),
-        home: const _Inicio(),
+        home: const PortaoLicenca(child: _Inicio()),
       ),
     );
   }
