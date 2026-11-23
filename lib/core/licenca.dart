@@ -29,6 +29,18 @@ class CodigoLicenca {
   static String normalizar(String s) =>
       s.toUpperCase().split('').where((c) => alfabeto.contains(c)).join();
 
+  /// Tira o código de um texto colado (aceita a mensagem inteira do WhatsApp,
+  /// espaços, quebras de linha e letras minúsculas).
+  static String extrairCodigo(String texto) {
+    final t = texto.toUpperCase();
+    final grupos = RegExp(r'([A-HJ-NP-Z2-9]{4})[\s\-–—_.]+([A-HJ-NP-Z2-9]{4})[\s\-–—_.]+([A-HJ-NP-Z2-9]{4})[\s\-–—_.]+([A-HJ-NP-Z2-9]{4})')
+        .firstMatch(t);
+    if (grupos != null) return '${grupos[1]}${grupos[2]}${grupos[3]}${grupos[4]}';
+    final soltos = RegExp(r'(?<![A-Z0-9])[A-HJ-NP-Z2-9]{16}(?![A-Z0-9])').firstMatch(t);
+    if (soltos != null) return soltos[0]!;
+    return normalizar(t);
+  }
+
   /// Formata em grupos de 4: ABCD-EFGH-…
   static String formatar(String s) {
     final n = normalizar(s);
@@ -101,7 +113,7 @@ class CodigoLicenca {
     required String instalacao,
     required String codigo,
   }) async {
-    final n = normalizar(codigo);
+    final n = extrairCodigo(codigo);
     if (n.length != 16) return null;
     final bytes = _deBase32(n);
     if (bytes == null || bytes.length < 10) return null;
@@ -115,6 +127,11 @@ class CodigoLicenca {
     return dias == permanente ? DateTime.utc(9999, 12, 31) : dataDe(dias);
   }
 }
+
+/// Número de instalação como é mostrado ao cliente: prefixo do app + 8
+/// caracteres (ex.: COC-ABCD-EFGH). O prefixo permite à página geradora
+/// escolher o app certo sozinha; a assinatura usa só os 8 caracteres.
+String numeroInstalacao(String instalacao) => '$appLicencaId-${CodigoLicenca.formatar(instalacao)}';
 
 class StatusLicenca {
   StatusLicenca({required this.instalacao, this.validade, this.relogioAtrasado = false});
@@ -203,12 +220,18 @@ class LicencaLocal {
     final validade = await CodigoLicenca.validar(
         appId: appLicencaId, chave: chaveLicenca, instalacao: st.instalacao, codigo: codigo);
     if (validade == null) {
-      throw const FormatException('Código inválido para este aparelho. Confira o código e o número de instalação.');
+      final n = CodigoLicenca.extrairCodigo(codigo);
+      if (n.length != 16) {
+        throw FormatException('O código deve ter 16 letras e números (ex.: ABCD-EFGH-JKLM-NPQR). '
+            'Foram reconhecidos ${n.length}. Confira se copiou o código completo.');
+      }
+      throw FormatException('Este código não é deste aparelho/aplicativo. Ele precisa ser gerado para o app '
+          '"$appLicencaNome" e para o número de instalação ${numeroInstalacao(st.instalacao)}.');
     }
     final novo = StatusLicenca(instalacao: st.instalacao, validade: validade, relogioAtrasado: st.relogioAtrasado);
     if (novo.diasRestantes < 0) throw const FormatException('Este código já está vencido. Peça um código novo.');
     final d = await _ler();
-    d['codigo'] = CodigoLicenca.formatar(codigo);
+    d['codigo'] = CodigoLicenca.formatar(CodigoLicenca.extrairCodigo(codigo));
     await _gravar(d);
     return novo;
   }

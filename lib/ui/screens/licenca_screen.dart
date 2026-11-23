@@ -111,7 +111,7 @@ class _LicencaScreenState extends State<LicencaScreen> {
   Widget build(BuildContext context) {
     final st = widget.status;
     final tema = Theme.of(context);
-    final instalacao = CodigoLicenca.formatar(st.instalacao);
+    final instalacao = numeroInstalacao(st.instalacao);
     String situacao;
     Color cor;
     if (st.relogioAtrasado) {
@@ -140,7 +140,7 @@ class _LicencaScreenState extends State<LicencaScreen> {
         const SizedBox(height: 12),
         Text(situacao, textAlign: TextAlign.center, style: TextStyle(color: cor, fontWeight: FontWeight.w600)),
         const SizedBox(height: 20),
-        const Text('1. Envie este número de instalação para quem lhe vendeu o aplicativo:'),
+        Text('1. Envie este número de instalação do app "$appLicencaNome" para quem lhe vendeu o aplicativo:'),
         const SizedBox(height: 8),
         Card(
           child: ListTile(
@@ -163,11 +163,16 @@ class _LicencaScreenState extends State<LicencaScreen> {
           Text('Contato: $contatoVendedor', textAlign: TextAlign.center),
         ],
         const SizedBox(height: 20),
-        const Text('2. Digite ou cole o código de ativação recebido (16 letras e números):'),
+        const Text('2. Cole aqui o código de ativação recebido (pode colar a mensagem inteira) e toque em Ativar:'),
         const SizedBox(height: 8),
         TextField(
           controller: _codigo,
           textCapitalization: TextCapitalization.characters,
+          autocorrect: false,
+          enableSuggestions: false,
+          keyboardType: TextInputType.visiblePassword,
+          minLines: 1,
+          maxLines: 3,
           decoration: InputDecoration(
             border: const OutlineInputBorder(),
             hintText: 'XXXX-XXXX-XXXX-XXXX',
@@ -181,7 +186,6 @@ class _LicencaScreenState extends State<LicencaScreen> {
               },
             ),
           ),
-          onSubmitted: (_) => _ativar(),
         ),
         const SizedBox(height: 16),
         FilledButton.icon(

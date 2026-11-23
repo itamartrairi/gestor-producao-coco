@@ -41,4 +41,17 @@ void main() {
     expect(StatusLicenca(instalacao: 'X').valida, isFalse);
     expect(StatusLicenca(instalacao: 'X', validade: h.add(const Duration(days: 60)), relogioAtrasado: true).valida, isFalse);
   });
+
+  test('aceita a mensagem inteira colada e espaços/minúsculas; mostra o prefixo do app', () async {
+    final dias = CodigoLicenca.diasDe(DateTime.now().add(const Duration(days: 30)));
+    final codigo = await CodigoLicenca.gerar(appId: appLicencaId, chave: chaveLicenca, instalacao: 'ABCDEFGH', dias: dias);
+    final msg = 'Olá! Seu código de ativação do App (instalação $appLicencaId-ABCD-EFGH, válido até 23/12/2026):\n\n'
+        '$codigo\n\nAbra o app, cole o código no campo de ativação e toque em Ativar.';
+    expect(CodigoLicenca.extrairCodigo(msg), CodigoLicenca.normalizar(codigo));
+    expect(await CodigoLicenca.validar(appId: appLicencaId, chave: chaveLicenca, instalacao: 'ABCDEFGH', codigo: msg), isNotNull);
+    expect(await CodigoLicenca.validar(
+        appId: appLicencaId, chave: chaveLicenca, instalacao: 'ABCDEFGH', codigo: ' ${codigo.toLowerCase().replaceAll('-', ' ')} '), isNotNull);
+    expect(CodigoLicenca.extrairCodigo(CodigoLicenca.normalizar(codigo)), CodigoLicenca.normalizar(codigo));
+    expect(numeroInstalacao('ABCDEFGH'), '$appLicencaId-ABCD-EFGH');
+  });
 }
