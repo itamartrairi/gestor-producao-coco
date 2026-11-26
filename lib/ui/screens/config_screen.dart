@@ -1,7 +1,6 @@
-import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
+import '../../core/arquivos.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/format.dart';
@@ -24,7 +23,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   final _imposto = TextEditingController();
   final _alerta = TextEditingController();
   bool _creditar = true;
-  String? _logo;
+  Uint8List? _logo;
   bool _ok = false;
 
   @override
@@ -39,7 +38,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
     _imposto.text = (await b.config('pct_imposto_vendas') ?? '0').replaceAll('.', ',');
     _alerta.text = await b.config('alerta_validade_dias') ?? '3';
     _creditar = (await b.config('creditar_custos_apropriados')) != '0';
-    _logo = await Logo.caminho();
+    _logo = await Logo.bytes();
     setState(() => _ok = true);
   }
 
@@ -91,17 +90,15 @@ class _ConfigScreenState extends State<ConfigScreen> {
     await executar(context, () async {
       final bytes = await BackupService.gerar(app: AppDb.instance, senha: senha);
       final nome = 'backup_gestor_coco_${hojeIso()}.gpcbak';
-      final caminho = await FilePicker.saveFile(dialogTitle: 'Salvar backup', fileName: nome, bytes: bytes);
-      if (caminho == null) throw RegraException('Backup não salvo (operação cancelada).');
+      final salvo = await salvarArquivo(titulo: 'Salvar backup', nome: nome, bytes: bytes);
+      if (!salvo) throw RegraException('Backup não salvo (operação cancelada).');
       await Base.auditar(banco, 'backup', detalhes: nome);
     }, sucesso: 'Backup salvo');
   }
 
   Future<void> _restaurar() async {
-    final arquivo = await FilePicker.pickFile();
-    if (arquivo == null || !mounted) return;
-    final Uint8List bytes = Uint8List.fromList(await arquivo.readAsBytes());
-    if (!mounted) return;
+    final Uint8List? bytes = await escolherArquivo();
+    if (bytes == null || !mounted) return;
     final senha = await _senha('Restaurar backup');
     if (senha == null || !mounted) return;
     Map<String, List<int>> arquivos;
@@ -138,7 +135,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
         const Secao('Negócio'),
         CampoTexto('Nome do negócio', _nome),
         Row(children: [
-          if (_logo != null) Image.file(File(_logo!), height: 56, key: ValueKey(DateTime.now())),
+          if (_logo != null) Image.memory(_logo!, height: 56, gaplessPlayback: true),
           TextButton.icon(
             icon: const Icon(Icons.image_outlined),
             label: Text(_logo == null ? 'Adicionar logomarca' : 'Trocar logomarca'),
@@ -187,6 +184,27 @@ class _ConfigScreenState extends State<ConfigScreen> {
             if (!await confirmar(context, 'Dados de exemplo', 'Incluir talhões, insumos, compras, manejos, colheitas e vendas de demonstração?')) return;
             if (!context.mounted) return;
             await executar(context, () => DemoService(banco).carregar(), sucesso: 'Dados de exemplo carregados');
+          },
+        ),
+        const SizedBox(height: 4),
+        const Text('Os exemplos só podem ser carregados com o app vazio. Para tirar os exemplos depois, use "Apagar todos os dados".',
+            style: TextStyle(fontSize: 12, color: Colors.black54)),
+        const Secao('Começar do zero'),
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(foregroundColor: Colors.red.shade700),
+          icon: const Icon(Icons.delete_forever_outlined),
+          label: const Text('Apagar todos os dados'),
+          onPressed: () async {
+            if (!await confirmar(context, 'Apagar todos os dados?',
+                'Serviços, clientes, agenda, vendas, financeiro e logomarca deste aparelho serão apagados. '
+                'Faça um backup antes se quiser guardar alguma coisa.', ok: 'Continuar')) {
+              return;
+            }
+            if (!context.mounted) return;
+            if (!await confirmar(context, 'Tem certeza?', 'Esta ação não pode ser desfeita.', ok: 'Apagar tudo')) return;
+            await AppDb.zerar(AppDb.instance);
+            await Logo.remover();
+            GestorApp.reiniciar.value++;
           },
         ),
         const SizedBox(height: 24),

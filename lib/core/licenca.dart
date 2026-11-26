@@ -1,10 +1,9 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:cryptography/cryptography.dart';
-import 'package:path_provider/path_provider.dart';
 
+import 'armazenamento.dart';
 import 'licenca_config.dart';
 
 /// Códigos de ativação por aparelho, com prazo de validade, conferidos sem
@@ -156,26 +155,19 @@ class StatusLicenca {
 class LicencaLocal {
   LicencaLocal._();
 
-  static Future<File> _arquivo() async {
-    final pasta = await getApplicationSupportDirectory();
-    return File('${pasta.path}/licenca_v1.json');
-  }
+  static const _nome = 'licenca_v1.json';
 
   static Future<Map<String, dynamic>> _ler() async {
-    final f = await _arquivo();
-    if (await f.exists()) {
+    final txt = await Armazenamento.lerTexto(_nome);
+    if (txt != null) {
       try {
-        return Map<String, dynamic>.from(jsonDecode(await f.readAsString()) as Map);
+        return Map<String, dynamic>.from(jsonDecode(txt) as Map);
       } catch (_) {}
     }
     return {};
   }
 
-  static Future<void> _gravar(Map<String, dynamic> dados) async {
-    final f = await _arquivo();
-    await f.parent.create(recursive: true);
-    await f.writeAsString(jsonEncode(dados), flush: true);
-  }
+  static Future<void> _gravar(Map<String, dynamic> dados) => Armazenamento.gravarTexto(_nome, jsonEncode(dados));
 
   static String _novaInstalacao() {
     final r = Random.secure();

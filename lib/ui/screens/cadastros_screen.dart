@@ -76,7 +76,7 @@ class _ItensScreenState extends State<ItensScreen> {
                   onExcluir: () async {
                     if (!await confirmarExclusao(context, '"${i['nome']}"')) return;
                     if (!context.mounted) return;
-                    await executar(context, () => S.cad.excluirItem(i['id'] as int), sucesso: 'Excluído');
+                    await executar(context, () async { final m = await S.cad.excluirItem(i['id'] as int); if (context.mounted) mostrarOk(context, m); });
                     rec();
                   },
                 ),
@@ -230,7 +230,7 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
               onPressed: () async {
                 if (!await confirmarExclusao(context, 'este cadastro')) return;
                 if (!context.mounted) return;
-                final ok = await executar(context, () => S.cad.excluirItem(widget.itemId!), sucesso: 'Excluído');
+                final ok = await executar(context, () async { final m = await S.cad.excluirItem(widget.itemId!); if (context.mounted) mostrarOk(context, m); });
                 if (ok && context.mounted) Navigator.pop(context);
               },
             ),
@@ -269,7 +269,7 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
                 onExcluir: () async {
                   if (!await confirmarExclusao(context, 'a variação "${v['nome']}"')) return;
                   if (!mounted) return;
-                  await executar(context, () => S.cad.excluirVariacao(v['id'] as int), sucesso: 'Excluída');
+                  await executar(context, () async { final m = await S.cad.excluirVariacao(v['id'] as int); if (context.mounted) mostrarOk(context, m); });
                   _variacoes = await S.cad.variacoes(widget.itemId!);
                   if (mounted) setState(() {});
                 },
@@ -441,7 +441,7 @@ class _SimplesCrudState extends State<SimplesCrud> {
   Future<void> _excluir(Map<String, Object?> reg) async {
     if (!await confirmarExclusao(context, '"${reg['nome']}"')) return;
     if (!mounted) return;
-    await executar(context, () => S.cad.excluirSimples(widget.tabela, reg['id'] as int), sucesso: 'Excluído');
+    await executar(context, () async { final m = await S.cad.excluirSimples(widget.tabela, reg['id'] as int); if (context.mounted) mostrarOk(context, m); });
     if (mounted) setState(() => _v++);
   }
 

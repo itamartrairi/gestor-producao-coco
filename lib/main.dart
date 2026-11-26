@@ -4,8 +4,8 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 
 import 'data/db.dart';
+import 'data/fabrica.dart';
 import 'services/base.dart';
-import 'services/demo_service.dart';
 import 'ui/screens/home_screen.dart';
 import 'ui/screens/licenca_screen.dart';
 import 'ui/screens/mais_screen.dart';
@@ -15,6 +15,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Intl.defaultLocale = 'pt_BR';
   await initializeDateFormatting('pt_BR');
+  await configurarBanco();
   await AppDb.abrir();
   runApp(const GestorApp());
 }
@@ -122,26 +123,7 @@ class _NegocioState extends State<_Negocio> {
     if (nome == null || nome.trim().isEmpty) {
       return (configurado: false, erroExemplos: false);
     }
-    final temDados = (await db.rawQuery('''
-      SELECT EXISTS (SELECT 1 FROM itens)
-          OR EXISTS (SELECT 1 FROM clientes)
-          OR EXISTS (SELECT 1 FROM fornecedores)
-          OR EXISTS (SELECT 1 FROM compras)
-          OR EXISTS (SELECT 1 FROM pedidos)
-          OR EXISTS (SELECT 1 FROM colheitas)
-          OR EXISTS (SELECT 1 FROM talhoes)
-          OR EXISTS (SELECT 1 FROM titulos)
-          OR EXISTS (SELECT 1 FROM movimentos_financeiros)
-          OR EXISTS (SELECT 1 FROM lancamentos_resultado) AS resultado
-    ''')).single['resultado'] == 1;
-    if (!temDados) {
-      try {
-        await DemoService(db).carregar();
-      } on Exception catch (erro, pilha) {
-        debugPrint('Falha ao carregar exemplos: $erro\n$pilha');
-        return (configurado: true, erroExemplos: true);
-      }
-    }
+    // Os dados de exemplo só entram se a pessoa pedir (boas-vindas ou Configurações).
     return (configurado: true, erroExemplos: false);
   }
 

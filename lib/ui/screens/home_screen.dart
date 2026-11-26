@@ -1,9 +1,10 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
 import '../../services/base.dart';
 import '../widgets/comum.dart';
+import '../widgets/rodape.dart';
 import '../widgets/logo.dart';
 
 import 'campo_screen.dart';
@@ -61,9 +62,9 @@ class _InicioScreen extends StatelessWidget {
 
   final VoidCallback abrirPainel;
 
-  Future<({String nome, String? logo})> _dados() async => (
+  Future<({String nome, Uint8List? logo})> _dados() async => (
         nome: await Base(banco).config('nome_negocio') ?? '',
-        logo: await Logo.caminho(),
+        logo: await Logo.bytes(),
       );
 
   @override
@@ -77,7 +78,7 @@ class _InicioScreen extends StatelessWidget {
         foregroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
       ),
-      body: Carregar<({String nome, String? logo})>(
+      body: Carregar<({String nome, Uint8List? logo})>(
         futuro: _dados,
         builder: (context, dados, _) => ListView(
           padding: const EdgeInsets.all(16),
@@ -90,8 +91,8 @@ class _InicioScreen extends StatelessWidget {
                 child: Column(
                   children: [
                     if (dados.logo case final caminho?)
-                      Image.file(
-                        File(caminho),
+                      Image.memory(
+                        caminho,
                         height: 88,
                         fit: BoxFit.contain,
                         semanticLabel: 'Logotipo da empresa',
@@ -135,6 +136,7 @@ class _InicioScreen extends StatelessWidget {
               icon: const Icon(Icons.dashboard_outlined),
               label: const Text('Abrir painel'),
             ),
+            const RodapeIG(),
           ],
         ),
       ),

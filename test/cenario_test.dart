@@ -263,12 +263,18 @@ void main() {
     expect((await est.saldo(doce, v)).disponivel, 2);
     expect(await FinanceiroService(db).saldoConta(1), 0);
 
-    // Venda de 3 unidades falha: só 2 válidas (lote vencido bloqueado).
-    await expectLater(
-      ped.vendaBalcao(data: hoje, itens: [ItemPedido(itemId: doce, variacaoId: v, quantidade: 3, precoUnitario: 120)], pagamentos: const []),
-      throwsA(isA<RegraException>()),
-    );
+    // Venda de 3 unidades com só 2 válidas: a venda não trava (lote vencido continua bloqueado).
+    final pv = await ped.vendaBalcao(
+        data: hoje,
+        itens: [ItemPedido(itemId: doce, variacaoId: v, quantidade: 3, precoUnitario: 120)],
+        pagamentos: [PagamentoInfo(meioId: 1, valor: 360)]);
+    expect((await est.saldo(doce, v)).fisico, 5);
+    expect(await FinanceiroService(db).saldoConta(1), 360);
+    // Excluir a venda desfaz tudo: estoque e caixa voltam.
+    await ped.excluir(pv);
     expect((await est.saldo(doce, v)).fisico, 7);
+    expect(await FinanceiroService(db).saldoConta(1), 0);
+    expect(await db.query('pedidos', where: 'id = ?', whereArgs: [pv]), isEmpty);
   });
 
   test('cartão: taxa registrada uma vez e conciliação do depósito', () async {
@@ -353,7 +359,7 @@ void main() {
     await campo.excluirTalhao(talhao);
     expect(await db.query('talhoes'), isEmpty);
 
-    // Pedido: orçamento é excluído; com sinal, não.
+    // Pedido: orçamento é excluído; com sinal também (o sinal sai do caixa).
     final cli = await db.insert('clientes', {'nome': 'Cli', 'criado_em': agoraIso()});
     final ped = PedidoService(db);
     final p1 = await ped.salvar(tipo: 'encomenda', clienteId: cli, dataPedido: hoje,
@@ -362,12 +368,15 @@ void main() {
     expect(await db.query('pedidos'), isEmpty);
     final p2 = await ped.salvar(tipo: 'encomenda', clienteId: cli, dataPedido: hoje,
         itens: [ItemPedido(itemId: coco, variacaoId: v, quantidade: 1, precoUnitario: 2)]);
+    final caixaAntes = await fin.saldoConta(1);
     await ped.registrarPagamento(pedidoId: p2, meioId: 1, valor: 1, data: hoje);
-    await expectLater(ped.excluir(p2), throwsA(isA<RegraException>()));
+    await ped.excluir(p2);
+    expect(await fin.saldoConta(1), caixaAntes);
+    expect(await db.query('pedidos'), isEmpty);
 
-    // Cadastros em uso não são excluídos; sem uso, sim.
-    await expectLater(cad.excluirSimples('clientes', cli), throwsA(isA<RegraException>()));
-    await expectLater(cad.excluirItem(adubo), throwsA(isA<RegraException>()));
+    // Cadastros: cliente sai; item com histórico é desativado; categoria do sistema fica.
+    await cad.excluirSimples('clientes', cli);
+    expect(await cad.excluirItem(adubo), CadastroService.msgDesativado);
     await expectLater(cad.excluirSimples('categorias_financeiras', 1), throwsA(isA<RegraException>())); // padrão
     final cli2 = await db.insert('clientes', {'nome': 'Sem uso', 'criado_em': agoraIso()});
     await cad.excluirSimples('clientes', cli2);

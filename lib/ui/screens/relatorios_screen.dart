@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
+import '../../core/arquivos.dart';
 import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
 
@@ -44,7 +44,7 @@ class RelatoriosScreen extends StatelessWidget {
 
 Future<CabecalhoPdf> _cabecalho(String titulo, String ini, String fim, List<String> filtros) async => CabecalhoPdf(
       negocio: await Base(banco).config('nome_negocio') ?? '',
-      logoPath: await Logo.caminho(),
+      logo: await Logo.bytes(),
       titulo: titulo,
       periodo: '${dataBr(ini)} a ${dataBr(fim)}',
       filtros: filtros,
@@ -217,12 +217,8 @@ class VisualizarPdf extends StatelessWidget {
             tooltip: 'Salvar em…',
             onPressed: () async {
               await executar(context, () async {
-                final caminho = await FilePicker.saveFile(
-                  dialogTitle: 'Salvar PDF',
-                  fileName: nome,
-                  bytes: bytes,
-                );
-                if (caminho != null && context.mounted) mostrarOk(context, 'PDF salvo');
+                final salvo = await salvarArquivo(titulo: 'Salvar PDF', nome: nome, bytes: bytes);
+                if (salvo && context.mounted) mostrarOk(context, 'PDF salvo');
               });
             },
           ),

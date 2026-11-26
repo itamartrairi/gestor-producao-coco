@@ -1,12 +1,12 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 
+import '../../core/armazenamento.dart';
 import '../widgets/comum.dart';
+import '../widgets/rodape.dart';
 import 'cadastros_screen.dart';
 import 'campo_screen.dart';
 import 'compras_screen.dart';
@@ -65,6 +65,7 @@ class MaisScreen extends StatelessWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => abrir(context, i.$4),
           ),
+        const RodapeIG(),
       ]),
     );
   }
@@ -72,13 +73,9 @@ class MaisScreen extends StatelessWidget {
 
 class ContaLocal {
   static final sessao = ValueNotifier<String?>(null);
+  static const _nome = 'gestor_conta_v1.json';
 
-  static Future<File> _arquivo() async {
-    final pasta = await getApplicationSupportDirectory();
-    return File('${pasta.path}/gestor_conta_v1.json');
-  }
-
-  static Future<bool> existe() async => (await _arquivo()).exists();
+  static Future<bool> existe() async => (await Armazenamento.lerTexto(_nome)) != null;
   static bool _gravando = false;
 
   static Future<List<int>> _verificador(String senha, List<int> sal) async {
@@ -88,28 +85,23 @@ class ContaLocal {
   }
 
   static Future<String?> entrar(String email, String senha, bool cadastrar) async {
-    final arquivo = await _arquivo();
     if (cadastrar) {
       if (_gravando) return 'Há um cadastro em andamento.';
       _gravando = true;
       try {
-        if (await arquivo.exists()) return 'Já existe uma conta neste aparelho. Use Login.';
+        if (await existe()) return 'Já existe uma conta neste aparelho. Use Login.';
         final aleatorio = Random.secure();
         final sal = List<int>.generate(32, (_) => aleatorio.nextInt(256));
         final hash = await _verificador(senha, sal);
-        await arquivo.parent.create(recursive: true);
-        final temporario = File('${arquivo.path}.tmp');
-        await temporario.writeAsString(
-          jsonEncode({'email': email, 'sal': base64Encode(sal), 'hash': base64Encode(hash)}),
-          flush: true,
-        );
-        await temporario.rename(arquivo.path);
+        await Armazenamento.gravarTexto(
+            _nome, jsonEncode({'email': email, 'sal': base64Encode(sal), 'hash': base64Encode(hash)}));
       } finally {
         _gravando = false;
       }
     } else {
-      if (!await arquivo.exists()) return 'Cadastre uma conta primeiro.';
-      final dados = jsonDecode(await arquivo.readAsString()) as Map<String, dynamic>;
+      final txt = await Armazenamento.lerTexto(_nome);
+      if (txt == null) return 'Cadastre uma conta primeiro.';
+      final dados = jsonDecode(txt) as Map<String, dynamic>;
       final hash = base64Decode(dados['hash'] as String);
       final atual = await _verificador(senha, base64Decode(dados['sal'] as String));
       if (hash.length != atual.length) return 'E-mail ou senha incorretos.';
